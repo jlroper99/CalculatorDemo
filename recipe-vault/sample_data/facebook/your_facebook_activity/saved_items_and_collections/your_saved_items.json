@@ -1,0 +1,18 @@
+{
+  "saves_v2": [
+    {
+      "timestamp": 1716336000,
+      "title": "Jane Doe saved a link.",
+      "attachments": [
+        {"data": [{"external_context": {"name": "The Best Classic Lasagna", "source": "example-recipes.com", "url": "https://example-recipes.com/best-lasagna/?fbclid=IwAR123"}}]}
+      ]
+    },
+    {
+      "timestamp": 1716940800,
+      "title": "Jane Doe saved Quick Cooks's post.",
+      "attachments": [
+        {"data": [{"external_context": {"name": "Quick Cooks", "url": "https://www.facebook.com/quickcooks/posts/pfbid0abc"}}]}
+      ]
+    }
+  ]
+}
