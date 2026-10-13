@@ -1,0 +1,9 @@
+{
+  "name": "Liahona — Listen & Read",
+  "short_name": "Liahona",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#faf7f0",
+  "theme_color": "#b8862b",
+  "icons": [{ "src": "favicon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}
