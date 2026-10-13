@@ -1,19 +1,19 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { chunk, wordAt } from "../public/js/narrator.js";
-import { heatStep } from "../public/js/util.js";
-import { normalize, offlineInsights } from "../lib/insights.js";
-import { getChapter, books } from "../lib/scripture.js";
 
-test("scripture data loads all 15 books and 239 chapters", () => {
-  assert.equal(books.length, 15);
-  assert.equal(books.reduce((a, b) => a + b.chapters.length, 0), 239);
-  assert.match(getChapter("1-ne", 1).verses[0], /^I, Nephi, having been born of goodly parents/);
-  assert.equal(getChapter("1-ne", 99), null);
+const bom = JSON.parse(readFileSync(new URL("../public/data/bom.json", import.meta.url), "utf8"));
+const chapter = (slug, n) => bom.books.find((b) => b.slug === slug).chapters[n - 1];
+
+test("scripture data has all 15 books and 239 chapters", () => {
+  assert.equal(bom.books.length, 15);
+  assert.equal(bom.books.reduce((a, b) => a + b.chapters.length, 0), 239);
+  assert.match(chapter("1-ne", 1)[0], /^I, Nephi, having been born of goodly parents/);
 });
 
 test("chunk covers the whole verse, in order, within the size limit", () => {
-  const verse = getChapter("alma", 32).verses[27];
+  const verse = chapter("alma", 32)[27];
   const parts = chunk(verse, 0, 200);
   assert.ok(parts.length > 1);
   for (const p of parts) {
@@ -35,27 +35,4 @@ test("wordAt finds word boundaries", () => {
   const t = "I, Nephi, having been";
   assert.deepEqual(wordAt(t, 4), [3, 9]);
   assert.deepEqual(wordAt(t, 0), [0, 2]);
-});
-
-test("heatStep buckets scores", () => {
-  assert.equal(heatStep(0), 0);
-  assert.equal(heatStep(10), 5);
-  assert.equal(heatStep(5), 3);
-  assert.equal(heatStep(null), 0);
-  assert.equal(heatStep(3.5, true), 3);
-});
-
-test("normalize fills a score for every verse and clamps values", () => {
-  const out = normalize({ verseScores: [{ verse: 2, score: 14, note: "x" }, { verse: 9, score: 5 }], keyVerses: [{ verse: 40, why: "" }] }, 3, "ai");
-  assert.deepEqual(out.verseScores.map((v) => v.score), [0, 10, 0]);
-  assert.equal(out.keyVerses.length, 0);
-});
-
-test("offline insights produce a full, valid shape", () => {
-  const ch = getChapter("alma", 32);
-  const ins = offlineInsights(ch);
-  assert.equal(ins.source, "offline");
-  assert.equal(ins.verseScores.length, ch.verses.length);
-  assert.ok(ins.themes.some((t) => t.name === "Faith"));
-  assert.ok(ins.keyVerses.length > 0);
 });

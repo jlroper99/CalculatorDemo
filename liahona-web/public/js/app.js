@@ -1,20 +1,16 @@
 import { Narrator } from "./narrator.js";
 import { store, verseKey, chapterKey, today, streak } from "./store.js";
-import { renderHeatmap } from "./heatmap.js";
-import { heatStep, esc, toast, api } from "./util.js";
+import { renderProgress } from "./progress.js";
+import { esc, toast } from "./util.js";
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const view = $("#view");
 const narrator = new Narrator();
 
 let BOM = null; // { books: [{ name, slug, fullTitle, heading, chapters: [[verse]] }] }
-let status = { ai: false };
 let current = null; // { book, chapter, verses }
-let currentInsights = null;
-let insightsIndex = {};
 let followPausedUntil = 0;
 let sleepTimer = null;
-let askHistory = [];
 
 // ---------------------------------------------------------------------------
 // Boot
@@ -22,14 +18,7 @@ let askHistory = [];
 
 async function boot() {
   applyTheme();
-  const [bom, st, idx] = await Promise.all([
-    fetch("data/bom.json").then((r) => r.json()),
-    api("/api/status").catch(() => ({ ai: false })),
-    api("/api/insights-index").catch(() => ({})),
-  ]);
-  BOM = bom;
-  status = st;
-  insightsIndex = idx;
+  BOM = await fetch("data/bom.json").then((r) => r.json());
   setupPlayer();
   setupVoices();
   window.addEventListener("hashchange", route);
@@ -56,7 +45,7 @@ function route() {
   if (narrator.playing && name !== "read") {
     // keep playing in the background; player bar stays visible
   }
-  if (name === "heatmap") return showHeatmap();
+  if (name === "progress") return showProgress();
   if (name === "saved") return showSaved();
   if (name === "search") return showSearch(decodeURIComponent(rest.join("/") || ""));
   showLibrary();
@@ -81,7 +70,7 @@ function showLibrary() {
         <div>
           <p class="eyebrow">The Book of Mormon</p>
           <h1>Listen and read, together.</h1>
-          <p class="lede">Narration with word-by-word highlighting that scrolls with the voice, plus AI chapter insights and an insight heatmap of the whole book.</p>
+          <p class="lede">Narration with word-by-word highlighting that scrolls with the voice, plus bookmarks, notes and progress tracking.</p>
         </div>
         ${
           last
@@ -103,7 +92,6 @@ function showLibrary() {
         <div class="stat"><span class="stat-value">${streak()}</span><span class="stat-label">day streak</span></div>
         <div class="stat"><span class="stat-value">${Math.round(weekSecs / 60)}</span><span class="stat-label">minutes this week</span></div>
         <div class="stat"><span class="stat-value">${doneCh}<small>/${totalCh}</small></span><span class="stat-label">chapters completed</span></div>
-        <div class="stat"><span class="stat-value">${Object.keys(insightsIndex).length}</span><span class="stat-label">chapters with insights</span></div>
       </div>
       <h2 class="section-title">Books</h2>
       <div class="books">
@@ -123,8 +111,7 @@ function showLibrary() {
                 ${b.chapters
                   .map((_, i) => {
                     const k = chapterKey(b.slug, i + 1);
-                    const heat = insightsIndex[k] ? heatStep(insightsIndex[k].avg, true) : 0;
-                    return `<a class="ch ${s.completed[k] ? "done" : ""}" data-heat="${heat}" href="#/read/${b.slug}/${i + 1}" title="${esc(b.name)} ${i + 1}">${i + 1}</a>`;
+                    return `<a class="ch ${s.completed[k] ? "done" : ""}" href="#/read/${b.slug}/${i + 1}" title="${esc(b.name)} ${i + 1}">${i + 1}</a>`;
                   })
                   .join("")}
               </div>
@@ -151,8 +138,6 @@ async function showReader(slug, chapter, verse) {
 
   if (!same) {
     current = { book, chapter, verses: book.chapters[chapter - 1] };
-    currentInsights = null;
-    askHistory = [];
     const startVerse = verse || (store.get().last?.slug === slug && store.get().last?.chapter === chapter ? store.get().last.verse : 1);
     narrator.announce = s.announceChapter;
     narrator.load({ title: `${book.name}, chapter ${chapter}.`, verses: current.verses }, { verse: startVerse || 1 });
@@ -169,7 +154,6 @@ async function showReader(slug, chapter, verse) {
   }
   document.getElementById("player").hidden = false;
   updatePlayerTitle();
-  if (!same) loadInsights();
 }
 
 function renderReader() {
@@ -180,7 +164,7 @@ function renderReader() {
   document.title = `${book.name} ${chapter} · Liahona`;
 
   view.innerHTML = `
-    <div class="reader ${store.settings().heatOverlay ? "heat-on" : ""}" style="--fs:${store.settings().fontSize}px">
+    <div class="reader" style="--fs:${store.settings().fontSize}px">
       <section class="text-col" aria-label="Chapter text">
         <nav class="chapter-nav">
           ${prev ? `<a class="icon-btn" href="#/read/${prev.slug}/${prev.chapter}" aria-label="Previous chapter">‹</a>` : `<span></span>`}
@@ -215,8 +199,6 @@ function renderReader() {
           ${next ? `<a class="btn" href="#/read/${next.slug}/${next.chapter}">Next: ${esc(bookBySlug(next.slug).name)} ${next.chapter} ›</a>` : `<p class="muted">The end of the Book of Mormon.</p>`}
         </footer>
       </section>
-      <div class="heatstrip" id="heatstrip" aria-label="Chapter insight heatmap; select a verse to jump"></div>
-      <aside class="insights" id="insights" aria-label="Chapter insights"></aside>
       <button class="follow-btn" id="followBtn" hidden>↓ Follow narration</button>
     </div>`;
 
@@ -256,8 +238,6 @@ function renderReader() {
     scrollToVerse(narrator.verse);
   };
 
-  renderHeatstrip();
-  renderInsights();
 }
 
 function neighbor(delta) {
@@ -281,8 +261,6 @@ function highlight({ verse, start }) {
     lastVerseEl = verseEl;
     store.update((s) => (s.last = { slug: current.book.slug, chapter: current.chapter, verse }), "position");
     updatePlayerProgress();
-    document.querySelectorAll("#heatstrip .hs-cell.now").forEach((c) => c.classList.remove("now"));
-    document.querySelector(`#heatstrip .hs-cell[data-v="${verse}"]`)?.classList.add("now");
   }
   const words = verseEl.querySelectorAll(".w");
   let wordEl = null;
@@ -334,7 +312,7 @@ function openVerseMenu(v, anchor) {
     </div>
     <button data-act="note">✎ ${s.notes[k] ? "Edit note" : "Add note"}</button>
     <button data-act="copy">⧉ Copy verse</button>
-    ${status.ai ? `<button data-act="ask">✦ Ask about this verse</button>` : ""}`;
+`;
   document.body.appendChild(menu);
   const r = anchor.getBoundingClientRect();
   menu.style.top = `${window.scrollY + r.bottom + 6}px`;
@@ -364,13 +342,6 @@ function openVerseMenu(v, anchor) {
     } else if (act === "copy") {
       await navigator.clipboard?.writeText(`${text} (${current.book.name} ${current.chapter}:${v})`);
       toast("Copied");
-    } else if (act === "ask") {
-      openInsightsPanel();
-      const input = $("#askInput");
-      if (input) {
-        input.value = `What does verse ${v} mean?`;
-        input.form.requestSubmit();
-      }
     }
     closeVerseMenu();
   };
@@ -391,202 +362,12 @@ function rerenderVerse(v) {
 }
 
 // ---------------------------------------------------------------------------
-// Insights
+// Progress, Saved, Search
 // ---------------------------------------------------------------------------
 
-async function loadInsights({ generate = false, force = false } = {}) {
-  const { book, chapter } = current;
-  const key = chapterKey(book.slug, chapter);
-  currentInsights = { loading: true };
-  renderInsights();
-  try {
-    let ins = null;
-    if (!force) ins = await api(`/api/insights/${book.slug}/${chapter}`).catch(() => null);
-    const wantUpgrade = ins && ins.source === "offline" && status.ai && store.settings().autoInsights;
-    if (!ins || force || wantUpgrade) {
-      if (!generate && !store.settings().autoInsights && !wantUpgrade) {
-        currentInsights = null;
-        return renderInsights();
-      }
-      currentInsights = { loading: true, generating: true };
-      renderInsights();
-      ins = await api(`/api/insights/${book.slug}/${chapter}`, { method: "POST", body: { force } });
-    }
-    if (chapterKey(current.book.slug, current.chapter) !== key) return;
-    currentInsights = ins;
-    const scores = ins.verseScores.map((v) => v.score);
-    insightsIndex[key] = {
-      source: ins.source,
-      avg: scores.reduce((a, b) => a + b, 0) / scores.length,
-      max: Math.max(...scores),
-      themes: ins.themes.map((t) => t.name),
-      scores,
-    };
-  } catch (err) {
-    if (chapterKey(current.book.slug, current.chapter) !== key) return;
-    currentInsights = { error: err.message };
-  }
-  renderInsights();
-  renderHeatstrip();
-  applyVerseHeat();
-}
-
-function applyVerseHeat() {
-  if (!currentInsights?.verseScores) return;
-  for (const s of currentInsights.verseScores) {
-    const el = document.getElementById("v" + s.verse);
-    if (!el) continue;
-    el.dataset.heat = heatStep(s.score);
-    if (s.note) el.title = `Insight ${s.score}/10 — ${s.note}`;
-  }
-}
-
-function renderHeatstrip() {
-  const el = $("#heatstrip");
-  if (!el || !current) return;
-  const scores = currentInsights?.verseScores;
-  el.innerHTML = current.verses
-    .map((_, i) => {
-      const s = scores?.[i];
-      return `<button class="hs-cell ${i + 1 === narrator.verse ? "now" : ""}" data-v="${i + 1}" data-heat="${s ? heatStep(s.score) : 0}"
-        aria-label="Verse ${i + 1}${s ? `, insight ${s.score} of 10` : ""}" title="v${i + 1}${s ? ` · ${s.score}/10${s.note ? " · " + esc(s.note) : ""}` : ""}"></button>`;
-    })
-    .join("");
-  el.onclick = (e) => {
-    const c = e.target.closest(".hs-cell");
-    if (!c) return;
-    const v = Number(c.dataset.v);
-    narrator.seek(v, 0);
-    scrollToVerse(v);
-  };
-}
-
-function renderInsights() {
-  const el = $("#insights");
-  if (!el) return;
-  const ins = currentInsights;
-  const head = `
-    <div class="ins-head">
-      <h2>✦ Chapter insights</h2>
-      <button class="icon-btn close-ins" aria-label="Close insights">✕</button>
-    </div>`;
-  let body = "";
-  if (!ins) {
-    body = `<p class="muted">Get a summary, themes, key verses, cross-references and discussion questions for this chapter${status.ai ? "" : " (basic offline analysis — add an API key on the server for AI insights)"}.</p>
-      <button class="btn primary" id="genIns">Generate insights</button>`;
-  } else if (ins.loading) {
-    body = `<div class="skeleton"></div><div class="skeleton short"></div><div class="skeleton"></div>
-      <p class="muted">${ins.generating ? (status.ai ? "Studying this chapter…" : "Analyzing…") : "Loading…"}</p>`;
-  } else if (ins.error) {
-    body = `<p class="error">${esc(ins.error)}</p><button class="btn" id="genIns">Try again</button>`;
-  } else {
-    const verseLink = (v) => `<a href="#/read/${current.book.slug}/${current.chapter}/${v}" class="vlink">v. ${v}</a>`;
-    body = `
-      ${ins.source === "offline" ? `<p class="badge">Basic offline analysis${status.ai ? "" : " · set ANTHROPIC_API_KEY for AI insights"}</p>` : ""}
-      <section><h3>Summary</h3><p>${esc(ins.summary)}</p></section>
-      ${ins.historicalContext ? `<section><h3>Context</h3><p>${esc(ins.historicalContext)}</p></section>` : ""}
-      ${ins.themes.length ? `<section><h3>Themes</h3><ul class="themes">${ins.themes.map((t) => `<li><strong>${esc(t.name)}</strong> ${esc(t.description)}</li>`).join("")}</ul></section>` : ""}
-      ${ins.keyVerses.length ? `<section><h3>Key verses</h3><ul class="key-verses">${ins.keyVerses.map((k) => `<li>${verseLink(k.verse)} <q>${esc(trimWords(current.verses[k.verse - 1], 18))}</q><span>${esc(k.why)}</span></li>`).join("")}</ul></section>` : ""}
-      <section>
-        <h3>Insight heatmap</h3>
-        <div class="mini-heat" role="img" aria-label="Insight score for each verse">
-          ${ins.verseScores.map((s) => `<a href="#/read/${current.book.slug}/${current.chapter}/${s.verse}" data-heat="${heatStep(s.score)}" style="--h:${Math.max(8, s.score * 10)}%" title="v${s.verse} · ${s.score}/10${s.note ? " · " + esc(s.note) : ""}"></a>`).join("")}
-        </div>
-        <div class="legend"><span>Narrative</span><span class="ramp"></span><span>Rich insight</span></div>
-        <label class="toggle"><input type="checkbox" id="heatToggle" ${store.settings().heatOverlay ? "checked" : ""}> Tint verses in the text</label>
-      </section>
-      ${ins.crossReferences.length ? `<section><h3>Cross-references</h3><ul class="xrefs">${ins.crossReferences.map((x) => `<li><strong>${esc(x.reference)}</strong> ${esc(x.connection)}</li>`).join("")}</ul></section>` : ""}
-      ${ins.questions.length ? `<section><h3>Ponder</h3><ol class="questions">${ins.questions.map((q) => `<li>${esc(q)}</li>`).join("")}</ol></section>` : ""}
-      ${ins.application ? `<section><h3>Apply it</h3><p>${esc(ins.application)}</p></section>` : ""}
-      <p class="fine">${ins.source === "ai" ? "AI-generated study aid — verify against the text and Church sources." : ""}
-        <button class="link" id="regenIns">Regenerate</button></p>`;
-  }
-  const ask = status.ai
-    ? `<section class="ask">
-        <h3>Ask about this chapter</h3>
-        <div class="ask-log" id="askLog">${askHistory.map((m) => `<div class="msg ${m.role}">${m.role === "assistant" ? linkVerses(esc(m.content)) : esc(m.content)}</div>`).join("")}</div>
-        <form id="askForm"><input id="askInput" placeholder="e.g. Why did Lehi have to leave Jerusalem?" autocomplete="off" maxlength="500"><button class="btn primary">Ask</button></form>
-      </section>`
-    : "";
-  el.innerHTML = head + `<div class="ins-body">${body}${ask}</div>`;
-
-  el.querySelector(".close-ins").onclick = () => document.body.classList.remove("show-insights");
-  $("#genIns")?.addEventListener("click", () => loadInsights({ generate: true }));
-  $("#regenIns")?.addEventListener("click", () => {
-    if (status.ai && !confirm("Regenerate insights for this chapter with AI?")) return;
-    loadInsights({ generate: true, force: true });
-  });
-  $("#heatToggle")?.addEventListener("change", (e) => {
-    store.setSetting("heatOverlay", e.target.checked);
-    $(".reader")?.classList.toggle("heat-on", e.target.checked);
-  });
-  $("#askForm")?.addEventListener("submit", onAsk);
-  applyVerseHeat();
-}
-
-async function onAsk(e) {
-  e.preventDefault();
-  const input = $("#askInput");
-  const q = input.value.trim();
-  if (!q) return;
-  const key = chapterKey(current.book.slug, current.chapter);
-  const history = askHistory.slice();
-  askHistory.push({ role: "user", content: q });
-  input.value = "";
-  const log = $("#askLog");
-  log.insertAdjacentHTML("beforeend", `<div class="msg user">${esc(q)}</div><div class="msg assistant pending">Thinking…</div>`);
-  log.scrollTop = log.scrollHeight;
-  try {
-    const { answer } = await api(`/api/ask/${current.book.slug}/${current.chapter}`, { method: "POST", body: { question: q, history } });
-    if (chapterKey(current.book.slug, current.chapter) !== key) return;
-    askHistory.push({ role: "assistant", content: answer });
-  } catch (err) {
-    askHistory.pop();
-    toast(err.message);
-  }
-  renderInsights();
-  const l = $("#askLog");
-  if (l) l.scrollTop = l.scrollHeight;
-}
-
-function linkVerses(html) {
-  return html.replace(/\b(v{1,2}\.|verses?)\s?(\d{1,3})/gi, (m, p, n) =>
-    Number(n) <= current.verses.length ? `<a href="#/read/${current.book.slug}/${current.chapter}/${n}" class="vlink">${m}</a>` : m,
-  );
-}
-
-function trimWords(t, n) {
-  const w = t.split(/\s+/);
-  return w.length > n ? w.slice(0, n).join(" ") + "…" : t;
-}
-
-function openInsightsPanel() {
-  document.body.classList.add("show-insights");
-}
-
-// ---------------------------------------------------------------------------
-// Heatmap, Saved, Search
-// ---------------------------------------------------------------------------
-
-async function showHeatmap() {
-  document.title = "Insight heatmap · Liahona";
-  insightsIndex = await api("/api/insights-index").catch(() => insightsIndex);
-  renderHeatmap(view, { BOM, index: insightsIndex, store, status, onGenerate: generateBook });
-}
-
-async function generateBook(slug, onProgress) {
-  const book = bookBySlug(slug);
-  for (let i = 1; i <= book.chapters.length; i++) {
-    const k = chapterKey(slug, i);
-    if (insightsIndex[k]?.source === "ai" || (!status.ai && insightsIndex[k])) {
-      onProgress(i, book.chapters.length);
-      continue;
-    }
-    const ins = await api(`/api/insights/${slug}/${i}`, { method: "POST", body: {} });
-    const scores = ins.verseScores.map((v) => v.score);
-    insightsIndex[k] = { source: ins.source, avg: scores.reduce((a, b) => a + b, 0) / scores.length, max: Math.max(...scores), themes: ins.themes.map((t) => t.name), scores };
-    onProgress(i, book.chapters.length);
-  }
+function showProgress() {
+  document.title = "Progress · Liahona";
+  renderProgress(view, { BOM, store });
 }
 
 function showSaved() {
@@ -710,7 +491,6 @@ function setupPlayer() {
     narrator.setRate(next);
     $("#rateBtn").textContent = fmtRate(next);
   };
-  $("#insBtn").onclick = () => document.body.classList.toggle("show-insights");
   $("#sleepBtn").onclick = cycleSleep;
   $("#settingsBtn").onclick = openSettings;
   $("#progress").onclick = (e) => {
@@ -755,7 +535,6 @@ function setupPlayer() {
       narrator.toggle();
     } else if (e.key === "ArrowDown" || e.key === "j") narrator.step(1);
     else if (e.key === "ArrowUp" || e.key === "k") narrator.step(-1);
-    else if (e.key === "i") document.body.classList.toggle("show-insights");
   });
 
   $("#searchForm").onsubmit = (e) => {
@@ -864,9 +643,7 @@ function openSettings() {
     <label class="toggle"><input type="checkbox" id="setFollow" ${s.follow ? "checked" : ""}> Auto-scroll to follow narration</label>
     <label class="toggle"><input type="checkbox" id="setAnnounce" ${s.announceChapter ? "checked" : ""}> Announce chapter before verse 1</label>
     <label class="toggle"><input type="checkbox" id="setAdvance" ${s.autoAdvance ? "checked" : ""}> Continue to next chapter automatically</label>
-    <label class="toggle"><input type="checkbox" id="setAutoIns" ${s.autoInsights ? "checked" : ""}> Load insights automatically when opening a chapter</label>
-    <p class="fine">AI: ${status.ai ? `on (${esc(status.model)})` : "off — the server has no ANTHROPIC_API_KEY, so insights use basic offline analysis."}<br>
-    Shortcuts: Space play/pause · ↑/↓ previous/next verse · i insights.</p>`;
+    <p class="fine">Shortcuts: Space play/pause · ↑/↓ previous/next verse.</p>`;
   $("#setVoice").onchange = (e) => {
     const v = voices.find((x) => x.voiceURI === e.target.value);
     store.setSetting("voiceURI", v?.voiceURI ?? null);
@@ -890,7 +667,6 @@ function openSettings() {
     narrator.announce = e.target.checked;
   };
   $("#setAdvance").onchange = (e) => store.setSetting("autoAdvance", e.target.checked);
-  $("#setAutoIns").onchange = (e) => store.setSetting("autoInsights", e.target.checked);
   d.showModal();
 }
 

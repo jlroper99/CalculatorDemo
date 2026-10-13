@@ -10,8 +10,6 @@ const defaults = {
     follow: true,
     fontSize: 20,
     theme: "auto", // auto | light | dark | sepia
-    heatOverlay: true,
-    autoInsights: true,
   },
   last: null, // { slug, chapter, verse }
   completed: {}, // "slug-ch": ISO date of last completion

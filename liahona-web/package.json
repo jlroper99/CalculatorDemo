@@ -1,7 +1,7 @@
 {
   "name": "liahona-web",
   "version": "1.0.0",
-  "description": "Listen to the Book of Mormon with synchronized, auto-scrolling text and AI-driven chapter insights.",
+  "description": "Listen to the Book of Mormon with synchronized, auto-scrolling text.",
   "type": "module",
   "main": "server.js",
   "scripts": {
@@ -12,8 +12,5 @@
   "engines": {
     "node": ">=20"
   },
-  "license": "MIT",
-  "dependencies": {
-    "@anthropic-ai/sdk": "^0.133.0"
-  }
+  "license": "MIT"
 }
