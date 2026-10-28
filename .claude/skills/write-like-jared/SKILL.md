@@ -40,7 +40,7 @@ Examples of his chat voice:
 
 ## Mode 2 — Short work email (reply or quick ask)
 
-- Often **no greeting** on replies inside a thread. On a new thread, start with just the name and a comma: `RJ,` or `Ryan,`.
+- Often **no greeting** on replies inside a thread. On a new thread, start with just the name and a comma: `[Name],`.
 - 1–3 short sentences. State the ask or the answer first.
 - Common shapes:
   - "Thanks for these updates. When should we plan on onboarding the new vendor resource?"
@@ -59,7 +59,7 @@ for other teams, or a formal request. Here Jared is **candid but professional,
 organized, and specific about the outcome he wants.**
 
 Structure (4–6 short paragraphs, no headers):
-1. **Greeting:** `Hi Kelly,` (external or new contact) or the names: `Weston, Glen, and Preston,`
+1. **Greeting:** `Hi [Name],` (external or new contact) or the names: `[Name], [Name], and [Name],`
 2. **Context in one line:** "Thank you for the update." / "I wanted to send another reminder that…" / "I wanted to tee this up and make sure we're following the right process…"
 3. **The position, stated plainly.** He names a problem without hedging: "I want to be candid that this additional change is frustrating for us." / "As we've discussed previously, [team] will not be providing…"
 4. **Why it matters.** Tie it to value, sustainability, or risk: continuity, demonstrating value internally, avoiding gaps, "isn't sustainable".
