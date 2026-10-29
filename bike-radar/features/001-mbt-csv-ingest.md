@@ -27,8 +27,9 @@ One file = one ride. One row = one car pass, already detected by MBT. The exact 
 
 ## Column mapping
 
-Units were inferred from one real ride (Provo UT, 2026-10-28, 122 passes). Every unit is
-`TODO(verify)` with the MBT maintainer, including whether an imperial account setting changes them.
+Units were inferred from two real rides near Provo UT on 2026-10-28 (122 and 66 passes); see
+"Verified on real exports" below. The account is set to **imperial**, yet the CSV is in m/s and m, so the
+display setting does not change export units. Still `TODO(verify)` with the MBT maintainer for metric accounts.
 
 | CSV column | `passes` column | Type | Unit in CSV | Conversion | Notes |
 |---|---|---|---|---|---|
@@ -36,20 +37,20 @@ Units were inferred from one real ride (Provo UT, 2026-10-28, 122 passes). Every
 | `utc timestamp` | `ts_utc` | timestamptz | epoch seconds, UTC | `to_datetime(unit="s", utc=True)` | **Not unique**: platoons share a second |
 | `utc excel native` | — | — | Excel serial days | ignored | Redundant with `utc timestamp` |
 | `local excel utc native` | — | — | Excel serial days, **local** time despite the name | ignored | Used only in the `tz_offset_mismatch` check |
-| `local time of day` | — | — | text, e.g. `7:15:02 AM` | ignored | Format `TODO(verify)`. Not used for derivation |
+| `local time of day` | `local_tz_abbr`, `local_hour`, `weekday` | text | quoted `"YYYY-MM-DD HH:MM:SS TZ"`, e.g. `"2026-10-28 13:16:56 MDT"` | parse wall time + abbreviation | Verified format. Parse failure = file fails |
 | `lat` | `geom` (Y) | POINT 4326 | degrees | none | |
 | `long` | `geom` (X) | POINT 4326 | degrees | none | |
 | `avgspdabs` | `avg_abs_mps` | float | m/s | none | Absolute car speed, averaged over the track |
-| `maxspdabs` | `max_abs_mps` | float | m/s | none | **Primary danger speed** |
-| `pass_spdabs` | `pass_abs_mps` | float | m/s | none | Secondary danger speed |
+| `maxspdabs` | `max_abs_mps` | float | m/s | none | **Primary danger speed**. ≈ `maxspdrel + rider speed`, so it is not always ≥ `avgspdabs`/`pass_spdabs` |
+| `pass_spdabs` | `pass_abs_mps` | float | m/s | none | Secondary danger speed. ≈ `passspdrel + rider speed` |
 | `maxspdrel` | `max_rel_mps` | float | m/s | none | 3 m/s Varia buckets |
 | `approachspdrel` | `approach_rel_mps` | float | m/s | none | 3 m/s buckets |
 | `passspdrel` | `pass_rel_mps` | float | m/s | none | 3 m/s buckets |
-| `slowdown` | `slowdown_mps` | float | m/s | none | Verified: `approachspdrel − passspdrel` |
+| `slowdown` | `slowdown_mps` | float | m/s | none | Verified: `approachspdrel − passspdrel`. Can be negative |
 | `pass_radarcnt` | `pass_radar_count` | int | count | none | |
 | `approach_spdabs` | `approach_abs_mps` | float | m/s | none | `approach_spdabs − avgriderspd ≈ approachspdrel` |
 | `approach_range` | `approach_range_m` | float | m, longitudinal | none | Varia max ≈ 140 m |
-| `closest_range` | `closest_range_m` | float | m, longitudinal | none | **Not** lateral passing distance |
+| `closest_range` | `closest_range_m` | float | m, longitudinal | none | 3 m buckets; 0 is common and normal. **Not** lateral passing distance |
 | `approach_radarcnt` | `approach_radar_count` | int | count | none | |
 | `passlength` | `track_seconds` | float | s | none | How long the radar tracked the car |
 | `avgriderspd` | `rider_mps` | float | m/s | none | |
@@ -59,10 +60,9 @@ one `UNIT_SCALE` table in the code, so that if the maintainer confirms different
 variant turns up) only that table changes, plus a new `source_format_version`.
 
 ### Derived fields
-- `local_tz` / `local_tz_abbr`: an IANA zone from the ride's first valid lat/long via `timezonefinder`
-  (offline). `local_tz_abbr` comes from `zoneinfo` at `ts_utc`, so DST is handled per pass.
-  New dependency, so it needs an ADR.
-- `local_hour` (0–23) and `weekday` (0 = Monday … 6 = Sunday): from `ts_utc` converted to `local_tz`.
+- `local_hour` (0–23), `weekday` (0 = Monday … 6 = Sunday) and `local_tz_abbr`: parsed from the
+  wall-clock time in `local time of day`. No timezone lookup and no new dependency. Both Excel columns are
+  ignored except in the `tz_offset_mismatch` cross-check.
 - Ride level: `started_at = min(ts_utc)`, `ended_at = max(ts_utc)`, `n_passes`,
   `source = mbt_csv`, `source_format_version = mbt_csv_v1`, `source_file_hash = sha256(file bytes)`,
   `has_track = false`.
@@ -88,19 +88,30 @@ variant turns up) only that table changes, plus a new `source_format_version`.
    | Flag | Condition |
    |---|---|
    | `zero_rel_speed` | `max_rel_mps == 0` or `approach_rel_mps == 0` (for example a Rearvue 820 reporting 0) |
-   | `zero_range` | `closest_range_m == 0` or `approach_range_m == 0` |
+   | `zero_range` | `approach_range_m == 0`. A `closest_range` of 0 is normal (3 m buckets, 26% of real passes) and is **not** flagged |
    | `implausible_speed` | `max_abs_mps > 45` (≈ 100 mph) or any absolute speed < 0. Threshold in config |
    | `rel_not_bucketed` | a relative speed that isn't a multiple of 3 m/s |
    | `slowdown_mismatch` | `abs(slowdown − (approachspdrel − passspdrel)) > 0.01` |
    | `approach_identity_off` | `abs((approach_spdabs − avgriderspd) − approachspdrel) > 3` (one bucket) |
    | `range_exceeds_radar` | a range over 150 m |
    | `bad_coords` | lat/long missing, `0,0`, or out of range |
-   | `tz_offset_mismatch` | `(local excel − utc excel)·24` differs from the zoneinfo offset by more than 0.25 h |
+   | `tz_offset_mismatch` | `local time of day` − `ts_utc` differs from `(local excel − utc excel)·24` by more than 0.25 h |
 
    A ride where every pass has `zero_rel_speed` is also flagged on `rides.notes`.
 9. **Privacy:** real exports are never committed. `.gitignore` blocks `*.csv` and `*.fit` outside
    `fixtures/` and `tests/fixtures/`. Imports read from wherever the user points; uploaded files are
    parsed in memory and not kept on disk.
+
+## Verified on real exports (2026-10-29, 66-pass ride, imperial account)
+- The header matches `mbt_csv_v1` exactly. LF line endings, no BOM.
+- `slowdown = approachspdrel − passspdrel` on 66/66 rows. It is negative on 6 rows.
+- `approach_spdabs − avgriderspd − approachspdrel`: mean −0.03, max |0.65| m/s.
+  The same holds for `maxspdabs`/`maxspdrel` and `pass_spdabs`/`passspdrel` (sd ≈ 0.2).
+  **So absolute speeds are a 3 m/s relative bucket plus rider speed, with ±1.5 m/s (±3.4 mph) resolution.**
+- All relative speeds and `closest_range` are multiples of 3. `approach_range` is an integer in m, with max 140 (the Varia limit).
+- `passlength` is an integer in s (2–26). Rider speed median 8.0 m/s (18 mph), which is plausible, so speeds are m/s and not mph.
+- `utc excel native` matches the epoch to under 1 ms. `utc − local excel` = 6.0 h (MDT).
+- This ride has no same-second passes (the 2026-10-28 ride had 13), so the fixture keeps that case.
 
 ## Interfaces
 - **CLI:** `bikeradar import PATH [--replace] [--json]`. A directory means a non-recursive import of every `*.csv`.
@@ -116,9 +127,10 @@ variant turns up) only that table changes, plus a new `source_format_version`.
 - [ ] Cars 2 and 3 share `utc timestamp` 1793193397 and both are stored.
 - [ ] Re-importing the same file is a no-op (ride and pass counts unchanged; returns `duplicate`).
 - [ ] Renaming, dropping, adding or reordering any header column is rejected with `HeaderDriftError`, and nothing is written.
-- [ ] Unit mapping: car 1 has `max_abs_mps == 18.1`, `ts_utc == 2026-10-28T13:15:02Z`, `local_hour == 7`
-      (America/Denver, MDT), `weekday == 2` (Wednesday), `closest_range_m == 4`, `track_seconds == 7`.
-- [ ] Car 3 has the `zero_range` flag. Cars 1, 2 and 4 have no flags.
+- [ ] Unit mapping: car 1 has `max_abs_mps == 18.1`, `ts_utc == 2026-10-28T13:15:02Z`, `local_hour == 7`,
+      `local_tz_abbr == "MDT"`, `weekday == 2` (Wednesday), `closest_range_m == 3`, `track_seconds == 7`.
+- [ ] No fixture pass has a quality flag. Car 3's `closest_range == 0` is not flagged.
+      Each flag is tested with a small inline CSV.
 - [ ] CLI directory import and the upload endpoint return the per-file summary described above.
 - [ ] An API integration test against PostGIS passes in CI.
 
@@ -129,10 +141,10 @@ variant turns up) only that table changes, plus a new `source_format_version`.
   same-second passes, and the upload endpoint.
 
 ## Open questions
-1. Units: confirm with the MBT maintainer (ROADMAP M1 email), and check an export made with an imperial account setting. `TODO(verify)`
-2. The exact format of `local time of day`. It isn't used, but the real export should be checked. `TODO(verify)`
-3. Does MBT ever renumber `car #` when a ride is reprocessed? This affects rule 6. `TODO(verify)`
+1. Units: confirm with the MBT maintainer (ROADMAP M1 email), especially for metric accounts. `TODO(verify)`
+2. Does MBT ever renumber `car #` when a ride is reprocessed? This affects rule 6. `TODO(verify)`
+3. Is `local time of day` ever in a format other than `YYYY-MM-DD HH:MM:SS TZ`, for example for rides outside the US? `TODO(verify)`
 
 ## ADRs
-- ADR-005: `timezonefinder` for local time (offline; no reliance on the Excel local column).
+- ADR-005: local time comes from `local time of day`, not the Excel columns and not a timezone lookup.
 - ADR-006: scaffold and tooling choices (made at M0).

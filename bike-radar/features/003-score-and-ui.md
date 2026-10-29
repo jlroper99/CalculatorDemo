@@ -32,7 +32,10 @@ The speed basis is `max_abs_mps` (`pass_abs_mps` is shown as secondary). For seg
 4. `n < 10` gives `insufficient_data` with no score, but the components are still shown.
 5. Every component, rank, the raw and shrunk score, `n_passes`, `n_rides` and the config hash are stored.
    This needs a schema ADR, because ARCHITECTURE's `segment_stats` lists a subset.
-6. Deterministic: the same inputs and config give byte-identical stats (reproducibility test).
+6. Speed resolution: `max_abs` is a 3 m/s bucket plus rider speed (001, verified), so it is only good to
+   about ±3.4 mph. Reports state this, and `pct_over`/`pct_over10` are sensitive to it. `TODO(decide)`:
+   a tolerance band, for example counting "over" only when > limit + 1.5 m/s.
+7. Deterministic: the same inputs and config give byte-identical stats (reproducibility test).
    Recomputation happens only for the ways an import touches.
 
 ## UI (Next.js + MapLibre + Recharts)

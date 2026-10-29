@@ -1,0 +1,9 @@
+# Never commit real ride data (AGENTS.md). Only synthetic fixtures are allowed.
+*.csv
+*.fit
+*.FIT
+*.gpx
+!fixtures/*.csv
+!tests/fixtures/*.csv
+!tests/fixtures/*.fit
+!tests/fixtures/*.gpx
