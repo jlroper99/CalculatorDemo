@@ -1,7 +1,7 @@
 ---
 id: 001
 title: MBT per-ride CSV ingest (mbt_csv_v1)
-status: draft   # drafted by the coding agent from the build prompt; set to `ready` once approved
+status: done
 milestone: M1
 depends_on: []
 ---
@@ -119,22 +119,24 @@ variant turns up) only that table changes, plus a new `source_format_version`.
   `make import PATH=...` wraps it.
 - **API:** `POST /rides/upload` (multipart, one or more files) returns one result per file:
   `{filename, status, ride_id, n_passes, flags_summary, error}`.
-  `GET /rides`, `GET /rides/{id}`, `GET /rides/{id}/passes` (GeoJSON).
+  `GET /rides`, `GET /rides/{id}`, `GET /rides/{id}/passes` (GeoJSON; locations within 300 m of the first/last pass are withheld, ADR-009).
 - **Library:** `bikeradar.ingest.mbt_csv.parse(bytes) -> ParsedRide` is pure, with no DB access, and is unit-tested.
 
 ## Acceptance criteria
-- [ ] `fixtures/mbt_export_synthetic.csv` imports as 1 ride with 4 passes.
-- [ ] Cars 2 and 3 share `utc timestamp` 1793193397 and both are stored.
-- [ ] Re-importing the same file is a no-op (ride and pass counts unchanged; returns `duplicate`).
-- [ ] Renaming, dropping, adding or reordering any header column is rejected with `HeaderDriftError`, and nothing is written.
-- [ ] Unit mapping: car 1 has `max_abs_mps == 18.1`, `ts_utc == 2026-10-28T13:15:02Z`, `local_hour == 7`,
+- [x] `fixtures/mbt_export_synthetic.csv` imports as 1 ride with 4 passes.
+- [x] Cars 2 and 3 share `utc timestamp` 1793193397 and both are stored.
+- [x] Re-importing the same file is a no-op (ride and pass counts unchanged; returns `duplicate`).
+- [x] Renaming, dropping, adding or reordering any header column is rejected with `HeaderDriftError`, and nothing is written.
+- [x] Unit mapping: car 1 has `max_abs_mps == 18.1`, `ts_utc == 2026-10-28T13:15:02Z`, `local_hour == 7`,
       `local_tz_abbr == "MDT"`, `weekday == 2` (Wednesday), `closest_range_m == 3`, `track_seconds == 7`.
-- [ ] No fixture pass has a quality flag. Car 3's `closest_range == 0` is not flagged.
+- [x] No fixture pass has a quality flag. Car 3's `closest_range == 0` is not flagged.
       Each flag is tested with a small inline CSV.
-- [ ] CLI directory import and the upload endpoint return the per-file summary described above.
-- [ ] An API integration test against PostGIS passes in CI.
+- [x] CLI directory import and the upload endpoint return the per-file summary described above.
+- [x] An API integration test against PostGIS passes in CI.
 
 ## Tests
+Paths are relative to `api/`.
+- `tests/unit/test_privacy.py`: endpoint masking (ADR-009).
 - `tests/unit/test_mbt_csv_parse.py`: header (exact, BOM, each kind of drift), types, duplicate `car #`,
   the conversions above, local hour and weekday, and each quality flag (small inline CSVs built from the fixture).
 - `tests/integration/test_import.py` (PostGIS): import, re-import no-op, content dedupe and `--replace`,
@@ -147,4 +149,6 @@ variant turns up) only that table changes, plus a new `source_format_version`.
 
 ## ADRs
 - ADR-005: local time comes from `local time of day`, not the Excel columns and not a timezone lookup.
-- ADR-006: scaffold and tooling choices (made at M0).
+- ADR-006: scaffold and tooling choices.
+- ADR-007: ingest semantics and schema additions.
+- ADR-009: endpoint privacy masking in the API from M1.
