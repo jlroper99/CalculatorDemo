@@ -1,0 +1,93 @@
+name: bike-radar
+
+on:
+  push:
+    branches: [master]
+    paths: ["bike-radar/**", ".github/workflows/bike-radar.yml"]
+  pull_request:
+    paths: ["bike-radar/**", ".github/workflows/bike-radar.yml"]
+
+concurrency:
+  group: bike-radar-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bike-radar/api
+    services:
+      db:
+        image: postgis/postgis:16-3.5
+        env:
+          POSTGRES_USER: bikeradar
+          POSTGRES_PASSWORD: bikeradar
+          POSTGRES_DB: bikeradar_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U bikeradar -d bikeradar_test"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+    env:
+      BIKERADAR_TEST_DATABASE_URL: postgresql+psycopg://bikeradar:bikeradar@localhost:5432/bikeradar_test
+      BIKERADAR_REQUIRE_DB: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.13.1"
+      - run: uv sync --frozen --python 3.12
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run mypy
+      - run: uv run pytest
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bike-radar/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: bike-radar/web/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: bike-radar/web/playwright-report
+          retention-days: 7
+
+  compose:
+    # Proves `make dev` works: images build, migrations run, upload works through the API.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bike-radar
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose config -q
+      - run: docker compose up -d --build --wait db api
+      - name: Upload the synthetic fixture through the API
+        run: |
+          curl -fsS -F "files=@fixtures/mbt_export_synthetic.csv" http://localhost:8000/rides/upload | tee upload.json
+          grep -q '"status":"imported"' upload.json
+          curl -fsS -F "files=@fixtures/mbt_export_synthetic.csv" http://localhost:8000/rides/upload | grep -q '"status":"duplicate"'
+      - run: docker compose build web
+      - if: failure()
+        run: docker compose logs
+      - if: always()
+        run: docker compose down -v

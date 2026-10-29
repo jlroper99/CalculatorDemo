@@ -1,0 +1,75 @@
+# Local stack. `make dev` starts db, api and web; `make dev-routing` also starts Valhalla (M2).
+name: bikeradar
+
+services:
+  db:
+    image: postgis/postgis:16-3.5
+    environment:
+      POSTGRES_USER: bikeradar
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bikeradar}
+      POSTGRES_DB: bikeradar
+    ports:
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - ./docker/db-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bikeradar -d bikeradar"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  api:
+    build: ./api
+    environment:
+      BIKERADAR_DATABASE_URL: postgresql+psycopg://bikeradar:${POSTGRES_PASSWORD:-bikeradar}@db:5432/bikeradar
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn bikeradar.api.app:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/src"
+    volumes:
+      - ./api/src:/app/src
+      - ./api/alembic:/app/alembic
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build: ./web
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+      WATCHPACK_POLLING: "true"
+    volumes:
+      - ./web/app:/app/app
+      - ./web/components:/app/components
+      - ./web/lib:/app/lib
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - api
+
+  # Map matching (features/002, M2). First start downloads the Geofabrik Utah extract and builds
+  # tiles into ./data/valhalla (several minutes, ~4 GB RAM). TODO(verify) env options in M2.
+  valhalla:
+    image: ghcr.io/valhalla/valhalla-scripted:3.9.1
+    profiles: ["routing"]
+    environment:
+      tile_urls: https://download.geofabrik.de/north-america/us/utah-latest.osm.pbf
+      serve_tiles: "True"
+      build_admins: "True"
+      build_time_zones: "True"
+      build_elevation: "False"
+      force_rebuild: "False"
+    volumes:
+      - ./data/valhalla:/custom_files
+    ports:
+      - "127.0.0.1:8002:8002"
+
+volumes:
+  db-data:
