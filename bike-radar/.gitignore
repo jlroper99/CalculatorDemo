@@ -7,3 +7,7 @@
 !tests/fixtures/*.csv
 !tests/fixtures/*.fit
 !tests/fixtures/*.gpx
+
+# Local data and secrets
+.env
+data/
