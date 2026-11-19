@@ -1,6 +1,6 @@
 // The "Progress" view: which chapters you've listened to, and a listening-activity calendar.
 import { chapterKey, today, streak } from "./store.js";
-import { esc } from "./util.js";
+import { esc, readHref } from "./util.js";
 
 export function renderProgress(view, { BOM, store }) {
   const s = store.get();
@@ -34,7 +34,7 @@ export function renderProgress(view, { BOM, store }) {
                   const current = s.last?.slug === b.slug && s.last?.chapter === i + 1;
                   const heat = done ? 4 : current ? 2 : 0;
                   const label = `${b.name} ${i + 1} · ${done ? `listened ${done}` : current ? "in progress" : "not yet"}`;
-                  return `<a class="hm-cell" href="#/read/${b.slug}/${i + 1}" data-heat="${heat}" data-tip="${esc(label)}" aria-label="${esc(label)}"></a>`;
+                  return `<a class="hm-cell" href="${readHref(b.slug, i + 1)}" data-heat="${heat}" data-tip="${esc(label)}" aria-label="${esc(label)}"></a>`;
                 })
                 .join("")}
             </div>

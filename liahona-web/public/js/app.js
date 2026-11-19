@@ -1,7 +1,7 @@
 import { Narrator } from "./narrator.js";
 import { store, verseKey, chapterKey, today, streak } from "./store.js";
 import { renderProgress } from "./progress.js";
-import { esc, toast } from "./util.js";
+import { esc, toast, readHref } from "./util.js";
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const view = $("#view");
@@ -11,6 +11,7 @@ let BOM = null; // { books: [{ name, slug, fullTitle, heading, chapters: [[verse
 let current = null; // { book, chapter, verses }
 let followPausedUntil = 0;
 let sleepTimer = null;
+let searchQuery = "";
 
 // ---------------------------------------------------------------------------
 // Boot
@@ -33,21 +34,17 @@ function bookBySlug(slug) {
 // Router
 // ---------------------------------------------------------------------------
 
+// Views: #library, #progress, #saved, #search and #read-<book>-<chapter>[-<verse>].
 function route() {
-  const hash = location.hash.replace(/^#\/?/, "");
-  const [name, ...rest] = hash.split("/");
-  document.querySelectorAll(".nav a").forEach((a) => a.classList.toggle("active", a.dataset.nav === (name || "library")));
-  document.body.dataset.view = name || "library";
-  if (name === "read") {
-    const [slug, ch, v] = rest;
-    return showReader(slug, Number(ch) || 1, Number(v) || null);
-  }
-  if (narrator.playing && name !== "read") {
-    // keep playing in the background; player bar stays visible
-  }
+  const hash = location.hash.slice(1);
+  const read = hash.match(/^read-(.+?)-(\d+)(?:-(\d+))?$/);
+  const name = read ? "read" : hash || "library";
+  document.querySelectorAll(".nav a").forEach((a) => a.classList.toggle("active", a.dataset.nav === name));
+  document.body.dataset.view = name;
+  if (read) return showReader(read[1], Number(read[2]) || 1, Number(read[3]) || null);
   if (name === "progress") return showProgress();
   if (name === "saved") return showSaved();
-  if (name === "search") return showSearch(decodeURIComponent(rest.join("/") || ""));
+  if (name === "search") return showSearch(searchQuery);
   showLibrary();
 }
 
@@ -74,13 +71,13 @@ function showLibrary() {
         </div>
         ${
           last
-            ? `<a class="continue card" href="#/read/${last.slug}/${s.last.chapter}/${s.last.verse || 1}">
+            ? `<a class="continue card" href="${readHref(last.slug, s.last.chapter, s.last.verse || 1)}">
                 <span class="eyebrow">Continue listening</span>
                 <strong>${esc(last.name)} ${s.last.chapter}</strong>
                 <span class="muted">Verse ${s.last.verse || 1}</span>
                 <span class="btn primary">▶ Resume</span>
               </a>`
-            : `<a class="continue card" href="#/read/1-ne/1">
+            : `<a class="continue card" href="${readHref("1-ne", 1)}">
                 <span class="eyebrow">Start here</span>
                 <strong>1 Nephi 1</strong>
                 <span class="muted">“I, Nephi, having been born of goodly parents…”</span>
@@ -111,7 +108,7 @@ function showLibrary() {
                 ${b.chapters
                   .map((_, i) => {
                     const k = chapterKey(b.slug, i + 1);
-                    return `<a class="ch ${s.completed[k] ? "done" : ""}" href="#/read/${b.slug}/${i + 1}" title="${esc(b.name)} ${i + 1}">${i + 1}</a>`;
+                    return `<a class="ch ${s.completed[k] ? "done" : ""}" href="${readHref(b.slug, i + 1)}" title="${esc(b.name)} ${i + 1}">${i + 1}</a>`;
                   })
                   .join("")}
               </div>
@@ -130,7 +127,7 @@ function showLibrary() {
 async function showReader(slug, chapter, verse) {
   const book = bookBySlug(slug);
   if (!book || !book.chapters[chapter - 1]) {
-    location.hash = "#/";
+    location.hash = "#library";
     return;
   }
   const same = current && current.book.slug === slug && current.chapter === chapter;
@@ -167,12 +164,12 @@ function renderReader() {
     <div class="reader" style="--fs:${store.settings().fontSize}px">
       <section class="text-col" aria-label="Chapter text">
         <nav class="chapter-nav">
-          ${prev ? `<a class="icon-btn" href="#/read/${prev.slug}/${prev.chapter}" aria-label="Previous chapter">‹</a>` : `<span></span>`}
+          ${prev ? `<a class="icon-btn" href="${readHref(prev.slug, prev.chapter)}" aria-label="Previous chapter">‹</a>` : `<span></span>`}
           <div class="pickers">
             <select id="bookPick" aria-label="Book">${BOM.books.map((b) => `<option value="${b.slug}" ${b.slug === book.slug ? "selected" : ""}>${esc(b.name)}</option>`).join("")}</select>
             <select id="chPick" aria-label="Chapter">${book.chapters.map((_, i) => `<option ${i + 1 === chapter ? "selected" : ""}>${i + 1}</option>`).join("")}</select>
           </div>
-          ${next ? `<a class="icon-btn" href="#/read/${next.slug}/${next.chapter}" aria-label="Next chapter">›</a>` : `<span></span>`}
+          ${next ? `<a class="icon-btn" href="${readHref(next.slug, next.chapter)}" aria-label="Next chapter">›</a>` : `<span></span>`}
         </nav>
         <header class="chapter-head">
           <p class="eyebrow">${esc(book.fullTitle)}</p>
@@ -196,14 +193,14 @@ function renderReader() {
             .join("")}
         </div>
         <footer class="chapter-end">
-          ${next ? `<a class="btn" href="#/read/${next.slug}/${next.chapter}">Next: ${esc(bookBySlug(next.slug).name)} ${next.chapter} ›</a>` : `<p class="muted">The end of the Book of Mormon.</p>`}
+          ${next ? `<a class="btn" href="${readHref(next.slug, next.chapter)}">Next: ${esc(bookBySlug(next.slug).name)} ${next.chapter} ›</a>` : `<p class="muted">The end of the Book of Mormon.</p>`}
         </footer>
       </section>
       <button class="follow-btn" id="followBtn" hidden>↓ Follow narration</button>
     </div>`;
 
-  $("#bookPick").onchange = (e) => (location.hash = `#/read/${e.target.value}/1`);
-  $("#chPick").onchange = (e) => (location.hash = `#/read/${book.slug}/${e.target.value}`);
+  $("#bookPick").onchange = (e) => (location.hash = readHref(e.target.value, 1));
+  $("#chPick").onchange = (e) => (location.hash = readHref(book.slug, e.target.value));
 
   const versesEl = $("#verses");
   versesEl.addEventListener("click", (e) => {
@@ -334,21 +331,32 @@ function openVerseMenu(v, anchor) {
       store.update((st) => (b.dataset.c ? (st.highlights[k] = b.dataset.c) : delete st.highlights[k]));
       rerenderVerse(v);
     } else if (act === "note") {
-      const note = prompt(`Note for ${current.book.name} ${current.chapter}:${v}`, s.notes[k]?.text || "");
-      if (note !== null) {
-        store.update((st) => (note.trim() ? (st.notes[k] = { text: note.trim(), updated: Date.now() }) : delete st.notes[k]));
-        rerenderVerse(v);
-      }
+      menu.innerHTML = `
+        <strong>Note · ${esc(current.book.name)} ${current.chapter}:${v}</strong>
+        <textarea id="noteText" rows="4" aria-label="Note text">${esc(s.notes[k]?.text || "")}</textarea>
+        <div class="row"><button class="btn primary" data-act="note-save">Save note</button><button class="btn" data-act="note-cancel">Cancel</button></div>`;
+      menu.querySelector("textarea").focus();
+      return;
+    } else if (act === "note-save") {
+      const note = menu.querySelector("textarea").value.trim();
+      store.update((st) => (note ? (st.notes[k] = { text: note, updated: Date.now() }) : delete st.notes[k]));
+      toast(note ? "Note saved" : "Note removed");
+      rerenderVerse(v);
     } else if (act === "copy") {
-      await navigator.clipboard?.writeText(`${text} (${current.book.name} ${current.chapter}:${v})`);
-      toast("Copied");
+      try {
+        await navigator.clipboard.writeText(`${text} (${current.book.name} ${current.chapter}:${v})`);
+        toast("Copied");
+      } catch {
+        toast("Couldn't copy. Select the verse text and copy it instead.");
+      }
     }
     closeVerseMenu();
   };
   setTimeout(() => document.addEventListener("click", outsideMenu, { once: true }), 0);
 }
 function outsideMenu(e) {
-  if (!e.target.closest(".verse-menu")) closeVerseMenu();
+  // composedPath still includes the menu when the clicked button was just replaced inside it
+  if (!e.composedPath().some((el) => el.classList?.contains("verse-menu"))) closeVerseMenu();
   else document.addEventListener("click", outsideMenu, { once: true });
 }
 function closeVerseMenu() {
@@ -396,7 +404,7 @@ function showSaved() {
               .map(
                 (it) => `
             <li class="card ${s.highlights[it.k] ? "hl-" + s.highlights[it.k] : ""}">
-              <a href="#/read/${it.book.slug}/${it.ch}/${it.v}"><strong>${esc(it.book.name)} ${it.ch}:${it.v}</strong> ${s.bookmarks[it.k] ? "🔖" : ""}</a>
+              <a href="${readHref(it.book.slug, it.ch, it.v)}"><strong>${esc(it.book.name)} ${it.ch}:${it.v}</strong> ${s.bookmarks[it.k] ? "🔖" : ""}</a>
               <p class="scripture">${esc(it.text)}</p>
               ${s.notes[it.k] ? `<p class="note">✎ ${esc(s.notes[it.k].text)}</p>` : ""}
             </li>`,
@@ -405,15 +413,22 @@ function showSaved() {
           : `<div class="empty card">Nothing saved yet.</div>`
       }
       <div class="row">
-        <button class="btn" id="exportBtn">Export my data</button>
-        <label class="btn">Import<input type="file" id="importFile" accept="application/json" hidden></label>
+        <button class="btn" id="exportBtn">Copy my data</button>
+        <label class="btn">Import from file<input type="file" id="importFile" accept="application/json" hidden></label>
       </div>
+      <textarea id="exportBox" class="export-box" rows="6" readonly hidden aria-label="Your data as JSON"></textarea>
     </section>`;
-  $("#exportBtn").onclick = () => {
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([store.exportJson()], { type: "application/json" }));
-    a.download = `liahona-${today()}.json`;
-    a.click();
+  $("#exportBtn").onclick = async () => {
+    const box = $("#exportBox");
+    box.hidden = false;
+    box.value = store.exportJson();
+    try {
+      await navigator.clipboard.writeText(box.value);
+      toast("Copied your data. Paste it into a .json file to keep a backup.");
+    } catch {
+      box.select();
+      toast("Copy the selected text and save it as a .json file.");
+    }
   };
   $("#importFile").onchange = async (e) => {
     try {
@@ -452,7 +467,7 @@ function showSearch(q) {
       <h1>Search</h1>
       <p class="muted">${terms.length ? `${results.length}${results.length >= 300 ? "+" : ""} verse${results.length === 1 ? "" : "s"} for “${esc(q)}”` : "Type a word or phrase in the search box."}</p>
       <ul class="results">${results
-        .map((r) => `<li><a href="#/read/${r.b.slug}/${r.c}/${r.v}"><strong>${esc(r.b.name)} ${r.c}:${r.v}</strong></a><p class="scripture">${mark(r.text)}</p></li>`)
+        .map((r) => `<li><a href="${readHref(r.b.slug, r.c, r.v)}"><strong>${esc(r.b.name)} ${r.c}:${r.v}</strong></a><p class="scripture">${mark(r.text)}</p></li>`)
         .join("")}</ul>
     </section>`;
 }
@@ -539,7 +554,9 @@ function setupPlayer() {
 
   $("#searchForm").onsubmit = (e) => {
     e.preventDefault();
-    location.hash = `#/search/${encodeURIComponent($("#searchInput").value.trim())}`;
+    searchQuery = $("#searchInput").value.trim();
+    if (location.hash === "#search") showSearch(searchQuery);
+    else location.hash = "#search";
   };
   $("#themeBtn").onclick = () => {
     const order = ["auto", "light", "sepia", "dark"];
@@ -554,7 +571,7 @@ function onChapterEnd() {
   store.update((s) => (s.completed[chapterKey(current.book.slug, current.chapter)] = today()));
   const next = neighbor(1);
   if (narrator.mode === "tts" && store.settings().autoAdvance && next && !sleepTimer?.endOfChapter) {
-    location.hash = `#/read/${next.slug}/${next.chapter}/1`;
+    location.hash = readHref(next.slug, next.chapter, 1);
     setTimeout(() => {
       window.scrollTo({ top: 0 });
       narrator.play(1, 0);
@@ -670,10 +687,13 @@ function openSettings() {
   d.showModal();
 }
 
+// The host page may set data-theme itself; "auto" restores whatever it set.
+const hostTheme = document.documentElement.getAttribute("data-theme");
 function applyTheme() {
   const t = store.settings().theme;
-  if (t === "auto") document.documentElement.removeAttribute("data-theme");
-  else document.documentElement.dataset.theme = t;
+  if (t !== "auto") document.documentElement.dataset.theme = t;
+  else if (hostTheme) document.documentElement.dataset.theme = hostTheme;
+  else document.documentElement.removeAttribute("data-theme");
 }
 
 const fmtRate = (r) => `${r}×`;
